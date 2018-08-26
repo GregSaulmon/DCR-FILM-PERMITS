@@ -1,0 +1,187 @@
+---
+title: "Massachusetts DCR Film Permits"
+author: "Greg Saulmon"
+date: "8/25/2018"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+The Department of Conservation and Recreation manages the Massachusetts state park system --- and that means managing production companies who want to film movies, television shows and commercials at locations from the summit of Mount Greylock to the Charles River Esplanade. Over the past decade, Massachusetts state parks have served as settings in movies such as "Patriots Day" and "The Finest Hours," and TV shows including "Wheel of Fortune" and "This Old House."
+
+But what are the most popular film-shoot locations in the state park system? Last year I requested data on film permits issued by the DCR over a 10-year period. 
+
+My goal with this exercise is to: 
+
+* identify the top locations, and visualize that data with a chart;
+* map all of the permitted locations, with circle sizes representing the number of permits. 
+
+## Load packages and data.
+Starting with the packages I'll need right away. I'll add more later for the chart and map.
+
+```{r load packages, warning=F, message=F}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+```
+
+In response to my public records request, the state provided six Excel spreadsheets for permits issued between 2007 and September 2017.  
+
+```{r load data, warning=F, message=F}
+df_1 <- read_excel("data/Active List 1.xls")
+
+df_2 <- read_excel("data/Active List 2.xls")
+
+df_3 <- read_excel("data/Active List 3.xls")
+
+df_4 <- read_excel("data/Archive List 1.xls")
+
+df_5 <- read_excel("data/Archive List 2.xls")
+
+df_6 <- read_excel("data/Archive List 3.xls")
+```
+
+## Clean the data. 
+The number of columns --- and some of the column names --- are inconsistent across the six spreadsheets. For example, the number of variables ranges from 39 to 47, and the permit sites are referred to as 'Location' in some sheets, and 'Combo253' in others. We'll make the key column names consistent, and drop the columns we don't need. 
+
+The most important variable is the DCR location. But we'll include permit year, information about who pulled the permit, the project name and details about the crew. Those are helpful for reference, and in weeding out duplicates. 
+
+Some of the newer spreadsheets also include a second DCR location column with more precise detail. That's helpful, too --- but it's missing from the older sheets, so we'll drop it. Finally, the spreadsheets imported as df_4-df_6 don't have a Permit Year column --- so I'll include the column for Permit Number and extract the year from that later. 
+
+I'm going to create new dataframes titled df_1a-df_6a, to help stay organized.
+
+```{r fix columns, warning=F, message=F}
+df_1a <- df_1 %>% 
+  select(Permit_year = `Permit Year`, 
+         Issued_to = `ISSUED TO`,
+         DCR_location = Combo253,
+         Project = `EVENT NAME`, 
+         Project_detail = SpecialEventInformation)
+
+df_2a <- df_2 %>% 
+  select(Permit_year = `Permit_Year`, 
+         Issued_to = `ISSUED TO`,
+         DCR_location = Combo253,
+         Project = `EVENT NAME`, 
+         Project_detail = SpecialEventInformation)
+
+df_3a <- df_3 %>% 
+  select(Permit_year = `Permit_Year`, 
+         Issued_to = `ISSUED TO`,
+         DCR_location = Combo253,
+         Project = `EVENT NAME`, 
+         Project_detail = SpecialEventInformation)
+
+df_4a <- df_4 %>% 
+  select(Permit_year = `PERMIT NUMBER`, 
+         Issued_to = `ISSUED TO`,
+         DCR_location = Location,
+         Project = `EVENT NAME`, 
+         Project_detail = SpecialEventInformation)
+
+df_5a <- df_5 %>% 
+  select(Permit_year = `PERMIT NUMBER`, 
+         Issued_to = `ISSUED TO`,
+         DCR_location = Location,
+         Project = `EVENT NAME`, 
+         Project_detail = SpecialEventInformation)
+
+df_6a <- df_6 %>% 
+  select(Permit_year = `PERMIT NUMBER`, 
+         Issued_to = `ISSUED TO`,
+         DCR_location = Location,
+         Project = `EVENT NAME`, 
+         Project_detail = SpecialEventInformation)
+```
+
+Now, fix the permit year data in df_4a-df_6a.
+
+The format for permit numbers begins with the year issued --- for example, 2007-0281. So, deleting everything from the hyphen to the end of the string gives us the year.
+
+Side note: The permit year isn't a factor in the two visualizations I'm creating here. But, it's a good variable to have in case I decide to look at permits issued by year, or permits at specific locations by year.
+
+```{r fix year, warning=F, message=F}
+df_4a$Permit_year <- as.numeric(gsub("-.*$", "", df_4a$Permit_year))
+
+df_5a$Permit_year <- as.numeric(gsub("-.*$", "", df_5a$Permit_year))
+
+df_6a$Permit_year <- as.numeric(gsub("-.*$", "", df_6a$Permit_year))
+```
+
+### Join dataframes and remove duplicates. 
+We've created dataframes df_1a-df_6a, with common column names. Time to join them. 
+
+```{r fix year 2, warning=F, message=F}
+dcr_permits <- bind_rows(df_1a, df_2a, df_3a, df_4a, df_5a, df_6a)
+```
+
+On an earlier pass through the raw spreadsheets I noticed that some entries were duplicated. I'm not sure how many --- but if there's even one, there may be others. Let's check. 
+
+```{r remove duplicates, warning=F, message=F}
+dcr_permits <- distinct(dcr_permits)
+```
+
+Looks like there were quite a few. The first iteration of dcr_permits had 1412 obs, but running distinct(dcr_permits) returned 835.
+
+Here's a look at the data. 
+
+```{r data table, warning=F, message=F}
+library(DT)
+
+datatable(dcr_permits)
+```
+
+## Find location totals.   
+
+```{r location totals, warning=F, message=F}
+location_totals <- dcr_permits %>% 
+  group_by(DCR_location) %>% 
+  summarize(Location_total=n()) %>% 
+  arrange(desc(Location_total))
+```
+
+Identify locations with 10 or more permits:
+
+```{r top locations, warning=F, message=F}
+top_locations <- location_totals %>% 
+  filter(Location_total>=10)
+```
+
+## Top locations: 
+
+```{r top table, warning=F, message=F, echo=F}
+library(knitr)
+kable(top_locations)
+```
+
+## Create a bar chart.
+We'll show locations with 10 or more permits.
+
+Shout-out to Nicholas Field --- I referred to the code for his chart on multilingual circulation in Toronto public library branches because I forgot how to flip the axes and present the totals in descending order.
+
+```{r bar chart, fig.width = 12, fig.asp = .8, warning=F, message=F}
+library(ggplot2)
+library(forcats)
+library(scales)
+library(extrafont)
+
+ggplot(top_locations, aes(x=fct_reorder(DCR_location, Location_total), y=Location_total)) + 
+  geom_bar(stat="identity", fill="#31a354", width = .6) +
+  geom_text(aes(label=Location_total), hjust=-.5, family="BentonSans Light", size=3) +
+  coord_flip() +
+  theme_classic() +
+  scale_y_continuous(breaks = pretty_breaks(n = 6)) +
+  labs(title="Film permits at Massachusetts DCR properties", 
+       subtitle="Locations with 10 or more permits between 2007 and 2017", 
+       y="", x="",
+       caption="Source: Massachusetts Department of Conservation and Recreation") +
+  theme(axis.line.y = element_line(color="grey80"), 
+        axis.line.x = element_line(color="grey80"),
+        axis.ticks = element_blank(),
+        axis.text.y = element_text(family="BentonSans Regular"),
+        axis.text.x = element_text(family="BentonSans Light"), 
+        plot.title = element_text(size=18, family="BentonSans Bold"),
+        plot.subtitle = element_text(size=12, family="BentonSans Book"),
+        plot.caption = element_text(size=8, family="BentonSans Light", hjust=1))
+```
