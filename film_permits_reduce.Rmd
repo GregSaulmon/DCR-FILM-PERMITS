@@ -4,8 +4,7 @@ author: "Greg Saulmon"
 date: "8/25/2018"
 output: 
   html_document:
-    toc: true
-    toc_float: true
+    theme: null
 ---
 The Department of Conservation and Recreation manages the Massachusetts state park system --- and that means managing production companies who want to film movies, television shows and commercials at locations from the summit of Mount Greylock to the Charles River Esplanade. Over the past decade, Massachusetts state parks have served as settings in movies such as "Patriots Day" and "The Finest Hours," and TV shows including "Wheel of Fortune" and "This Old House."
 
@@ -124,15 +123,7 @@ dcr_permits <- distinct(dcr_permits)
 
 Looks like there were quite a few. The first iteration of dcr_permits had 1412 obs, but running distinct(dcr_permits) returned 835.
 
-Here's a look at the data. 
-
-```{r data table, warning=F, message=F}
-library(DT)
-
-datatable(dcr_permits)
-```
-
-## Find location totals.   
+## Find location totals and visualize.   
 
 ```{r location totals, warning=F, message=F}
 location_totals <- dcr_permits %>% 
@@ -148,19 +139,19 @@ top_locations <- location_totals %>%
   filter(Location_total>=10)
 ```
 
-## Top locations: 
+### Top locations: 
 
 ```{r top table, warning=F, message=F, echo=F}
 library(knitr)
 kable(top_locations)
 ```
 
-## Create a bar chart.
+### Create a bar chart.
 We'll show locations with 10 or more permits.
 
 Shout-out to Nicholas Field --- I referred to the code for his chart on multilingual circulation in Toronto public library branches because I forgot how to flip the axes and present the totals in descending order.
 
-```{r bar chart, fig.width = 12, fig.asp = .8, warning=F, message=F}
+```{r bar chart, fig.width = 12, fig.asp = .8, dpi=72, warning=F, message=F}
 library(ggplot2)
 library(forcats)
 library(scales)
@@ -185,3 +176,128 @@ ggplot(top_locations, aes(x=fct_reorder(DCR_location, Location_total), y=Locatio
         plot.subtitle = element_text(size=12, family="BentonSans Book"),
         plot.caption = element_text(size=8, family="BentonSans Light", hjust=1))
 ```
+
+## Create maps. 
+I'll start by loading libraries and options, and a base Massachusetts map. I'll use leaflet for a final interactive version --- but I found creating a static map was a good way to do a quick check on the geocoding accuracy. And if I decide to create a static version later, I'll have a head start. 
+
+```{r map packages, warning=F, message=F, results = 'hide'}
+library(tigris)
+library(sf)
+library(ggmap)
+library(leaflet)
+
+options(tigris_class="sf")
+
+options(device = "X11") 
+X11.options(type = "cairo")
+
+ma <- states(cb=T) %>% 
+  filter(NAME=="Massachusetts")
+```
+
+### Geocode DCR_locations. 
+A challenge is that the raw data only gives a basic location description --- usually a state park name, but no city, town, street address or zip code. 
+
+I was hoping the state's GIS department would have a data layer for DCR properties. But, no such luck. 
+
+I'm going to take a leap of faith and add an address column that tacks the state name onto the location description, and see if that works.  
+
+```{r geocode, warning=F, message=F}
+location_geo <- location_totals %>% 
+  mutate(address = paste0(DCR_location, ", ", "MA"))
+
+geo <- mutate_geocode(location_geo, address)
+```
+
+It looks like the geocoding went OK. Let's look at a datatable to make sure it didn't fail to return lat / lon pairings for any locations. If any are missing, it's possible to update manually, as documented below. 
+
+```{r geo datatable, warning=F, message=F}
+library(DT)
+
+datatable(geo)
+
+```
+This has been the big inconsistency: the very first pass returned lat / lon pairings for every location. Subsequent passes have failed to geocode some locations --- in some cases, dozens of locations end up getting dropped. I did export a .csv of the completed geo dataframe, which is available in the repo's output_data folder as geo.csv. 
+
+Let's take a look at a static map to make sure all the points are within Massachusetts.
+
+```{r check map, dpi=72, warning=F, message=F}
+ggplot(ma) + 
+  geom_sf() +
+  geom_point(data = geo, aes(x=lon, y=lat, size=Location_total), color="#31a354") +
+  theme_void() +
+  theme(panel.grid.major = element_line(colour = 'transparent'))
+```
+
+In some runs of the code, I've had two locations geocode incorrectly, with both falling to the southwest of the state.
+
+But which ones are they? The state's southwest border is at lon -73.496867. So, let's look for any locations that geocoded at a longitude west of -73.496867. (This can be adapted in future runs if any points fall to the north, south or east of the state's borders.) 
+
+```{r find lon, warning=F, message=F}
+mapcheck <- geo %>% 
+  filter(lon < -73.496867)
+
+datatable(mapcheck)
+```
+
+In some cases the geocode step is returning a DCR_location, listed as NA, falling far outside the state. We can drop that row from the geo dataframe. 
+
+In other runs of the code, a DCR_location listed as Riverdale Park is geocoding to Maryland. The correct Riverdale Park address is Dedham, MA 02026. Find that lat / lon in Google maps and update it in the geo dataframe. 
+
+```{r fix lon, warning=F, message=F}
+geo <- geo %>% 
+  filter(DCR_location != "NA")
+# Riverdale park lon and lat:
+geo[168, 4] = -71.174923
+
+geo[168, 5] = 42.271868
+```
+
+Geocode also failed once on a location listed as Nonantum Road Branch. It worked on subsequent try, but it looks like the lat / lon is wrong --- it's showing up in Marblehead, but it should be in Newton. The permit information mentions the crew parking at Community Rowing, which is adjacent to some DCR property. From Google maps, the correct lat / lon is: 42.358630, -71.165553. Change that manually:
+
+```{r fix nonantum, warning=F, message=F}
+geo[160, 4] = -71.165553
+
+geo[160, 5] = 42.358630
+```
+
+A general note: The Nonantum Road error makes me wary of other location errors. Overall, it appears that geocoding w/ raw DCR_location names worked OK --- I can see that places like Mount Greylock and Bash Bish Falls are about where they should be. But for a truly final version, I'll need to find a better way to double-check location data.  
+
+Yet another geocode pass also returned an OVER_QUERY_LIMIT warning and returned NA values as the lat / lon for Mary O'Malley Waterfront Park in Chelsea, MA. If that happens again, here's the manual fix. (This exact behavior may not reproduce in the future. For  example, an over query error could introduce lat / lon NAs for a different property. Documenting nonetheless to offer an easy fix if it happens: based on any locations listed in error warnings, look up lat / lon and add manually.)
+
+```{r fix omalley, warning=F, message=F}
+geo[54, 4] = -71.052152
+
+geo[54, 5] = 42.388772
+```
+
+As a final bit of preparation: When I ran str(geo) in the console to make sure lat / lon were showing as numeric, I noticed that Location_totals are integers. Not sure if it matters, but I'll change them to numeric. 
+
+```{r fix integers, warning=F, message=F}
+geo$Location_total <- as.numeric(geo$Location_total)
+```
+
+### Create interactive map. 
+
+Start by building the popup. 
+
+```{r popup, warning=F, message=F}
+popup_dcr <- paste0("<b>", geo$DCR_location, 
+                   "</b><br />Number of permits: ", "<b>",geo$Location_total,"</b>")
+```
+
+Make the final map. I'm switching up the colors to make the smallest circles easier to see. 
+
+```{r final map, warning=F, message=F}
+film_map <- leaflet(geo) %>% 
+  addProviderTiles(providers$Esri.WorldGrayCanvas) %>% 
+  setView(-71.931180, 42.385453, zoom = 8) %>% 
+  addCircleMarkers(~lon, ~lat, popup = ~popup_dcr, weight = 3, radius = ~Location_total/2, 
+             color="#c51b7d", stroke = FALSE, fillOpacity = 0.7)
+
+film_map
+```
+
+I spent a lot of time tweaking the radius parameters. Pegging them strictly to Location_total created huge circles that made the map unwieldy at certain zoom levels. 
+
+Setting the radius to the square root of Locaton_total knocked down the size of the larger circles too much, I thought. I settled on Location_total/2 --- but I'm still not sure this is the best choice.
